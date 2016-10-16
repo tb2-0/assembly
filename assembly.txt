@@ -1,0 +1,145 @@
+# Tristan Beyer
+# Homework #8 - Final Part of Hardware Multiplication
+# April 22, 2015
+
+# Base program for Homework #8
+
+# Registers used: 
+#$s0 - base address for program
+#$s1 - storage for num1
+#$s2 - storage for num2
+#$s3 - num1 significand/ later significand with implied 1
+#$s4 - num1 exponent
+#$s5 - num1 sign bit/ later the result of sign bits XOR of two user numbers
+#$s6 - HI/ later the combination of HI and LO
+#$s7 - storage for product of normal multiplication
+#$t1 - mask 1
+#$t2 - mask 2
+#$t3 - mask 3
+#$t4 - mask 4
+#$t5 - num2 significand/ later significand with implied 1
+#$t6 - num2 exponent
+#$t7 - num2 sign bit
+#$t8 - LO/ later the sign bit for the multiplied significand- BEQ test
+#$t9 - two exponenet numbers added together/ product of hardware multiplication process
+#$f0 - f register to transfer from F to G register
+#$f1 - storage for floating point value of num1
+#$f2 - storage for floating point value of num2
+#$f12 - storage for floating point value of product
+#$a0 - loading address of string
+
+	.data
+num1:   .word 0		  #first floating point number input by user
+num2:   .word 0    	  #second floating point number input by user
+prdct:  .word 0		  #product of the two floating point numbers input by user
+mask1:  .word 0x007fffff  #Mask for bits 0-22 - significand
+mask2:  .word 0x7f800000  #mask for bits 23-30 - exponent
+mask3:  .word 0x80000000  #mask for bit 31    - sign bit
+mask4:  .word 0x00800000  #mask for the implied 1
+Ques:   .asciiz	"Enter a floating point number to multiply: "
+Ques2:  .asciiz "Enter another floating point number to multiply: "
+Result: .asciiz "The product of the two numbers is: \n"
+Line:   .asciiz "\n"
+
+	.text
+main:   
+	lui  $s0, 0x1001        #define base memory address
+	jal  sub1		#call sub1
+	
+	##### Multiply the two user input numbers #####
+	mtc1 $s1, $f1		#load 1st number into f register 1
+	mtc1 $s2, $f2		#load 2nd number into f register 2
+	mul.s  $f12, $f1, $f2	#multiply two numbers to get prdct and store in f12 register
+	mfc1 $s7, $f12 		#move product to register
+	sw   $s7, 8($s0)	#store product
+	##### Use masks to seperate the 3 parts of user input numbers#####
+	
+	lw $t1, 12($s0)		#load mask1 significand
+	lw $t2, 16($s0)		#load mask2 exponenet
+	lw $t3, 20($s0)		#load mask3 sign bit
+	lw $t4, 24($s0)		#load mask4 implied 1
+	and $s3, $s1, $t1	#extract num1 significand
+	and $s4, $s1, $t2	#extract num1 exponent
+	srl $s4, $s4, 23	#shift exponent into lower 8 bits
+	and $s5, $s1, $t3	#extract num1 sign bit
+	or  $s3, $s3, $t4	#add num1 implied 1 to signicand for num1
+	
+	and $t5, $s2, $t1	#extract num2 significand
+	and $t6, $s2, $t2	#extract num2 exponent
+	srl $t6, $t6, 23	#shift exponent into lower 8 bits
+	and $t7, $s2, $t3	#extract num2 sign bit
+	or  $t5, $t5, $t4	#add num2 implied 1 to significand for num2
+	
+	###Starting Hardware multiplication process
+	
+	add $t9, $s4, $t6	#add two exponenets
+	addi $t9, $t9, -127	#subtract bias
+	
+	multu $t5, $s3		#multiply both significands with the implied 1 in them
+	mfhi $s6		#move bits into HI
+	sll  $s6, $s6, 16	#shift bits in HI into most significant bits
+	mflo $t8		#move bits into LO
+	srl  $t8, $t8, 16	#shift bits in LO into least significant bits
+	or   $s6, $s6, $t8	#or the HI and LO
+	
+	##Normalization##
+	ori  $t8, $zero, 0	#clear $t8
+	and  $t8, $s6, $t3	#isolate the sign bit for normalization
+	beq  $t8, $zero, label  #Is sign bit equal to 0? normalization
+	srl  $s6,$s6, 1		#shift the significand right one bit position
+	addi $t9,$t9, 1		#increment the exponent by 1
+label:  
+	
+	##Truncating##
+	srl $s6, $s6, 7		#Truncate significand
+	xor $s5, $s5, $t7	#XOR the sign bits of original user input numbers
+	
+	sll $t9, $t9, 23	#shift exponent into correct bit position
+	and $s6, $s6, $t1	#remove the implied 1 from significand result
+	or  $t9, $t9, $s6	#combine the exponent and the significand
+	or  $t9, $t9, $s5	#combine the sign bit to the expo and significand
+	sw  $t9, 28($s0)	#store product
+	##
+	
+	jal  sub2		#call sub2
+	
+exit:	ori	$v0, $zero, 10
+	syscall
+
+sub1:
+	#####  Code for calling Ques1 and Ques2, and receiving user input#####
+	li   $v0, 4		#syscall code for print string ques1 in $v0
+	la   $a0, Ques		#load address of string in $a0
+	syscall			#print string on console
+	li   $v0, 6		#syscall for reading a floating point
+	syscall			#read reply of first number
+	mfc1 $s1, $f0		#copy value from FPR to GPR for 1st number
+	sw   $s1, 0($s0)	#store read number 1 into memory
+	
+	li   $v0, 4		#syscall code for print string ques2 in $v0
+	la   $a0, Ques2		#load address of string in $a0
+	syscall			#print string on console
+	li   $v0, 6		#syscall for reading a floating point
+	syscall			#read reply of first number
+	mfc1 $s2, $f0		#copy value from FPR to GPR for 1st number
+	sw   $s2, 4($s0)	#store read number 2 into memory
+	
+	jr   $ra		#exit sub1
+
+sub2:
+	###### Code for printing Result ########
+	li   $v0, 4		#syscall code for print string result in $v0
+	la   $a0, Result	#load address of string in $a0
+	syscall			#print String line result
+	
+	li   $v0, 2		#syscall for printing floating point product
+	syscall		        #print product
+	
+	li   $v0, 4		#syscall code for print string result in $v0
+	la   $a0, Line		#load address of string in $a0
+	syscall			#print String line result
+	
+	mtc1 $t9, $f12		#Print the final product of hardware
+	li $v0, 2		#		
+	syscall			#
+	jr   $ra		#exit sub2
